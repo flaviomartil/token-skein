@@ -6,7 +6,10 @@ import type { TokenSkeinConfig, JsonObject } from "./types.ts";
 
 const home = homedir();
 
+export const CURRENT_CONFIG_SCHEMA_VERSION = 2;
+
 export const DEFAULT_CONFIG: TokenSkeinConfig = {
+  schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
   host: "127.0.0.1",
   port: 8788,
   upstream: "https://api.openai.com",
@@ -50,10 +53,47 @@ export const DEFAULT_CONFIG: TokenSkeinConfig = {
     maxRequestBytes: 8_388_608,
     upstreamTimeoutMs: 120_000,
   },
+  archive: {
+    maxBytes: 200 * 1024 * 1024,
+  },
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+type ConfigMigration = (raw: Record<string, unknown>) => Record<string, unknown>;
+
+const CONFIG_MIGRATIONS: Record<number, ConfigMigration> = {
+  1: (raw) => ({
+    ...raw,
+    schemaVersion: 2,
+    archive: isObject(raw.archive) ? raw.archive : { maxBytes: DEFAULT_CONFIG.archive.maxBytes },
+  }),
+};
+
+export function migrateConfigSchema(raw: unknown): JsonObject {
+  if (raw === undefined) return {};
+  if (!isObject(raw)) {
+    throw new Error("Invalid token-skein config file: expected a JSON object.");
+  }
+
+  let value: Record<string, unknown> = raw;
+  let version = typeof value.schemaVersion === "number" ? value.schemaVersion : 1;
+  while (version < CURRENT_CONFIG_SCHEMA_VERSION) {
+    const migrate = CONFIG_MIGRATIONS[version];
+    if (!migrate) {
+      throw new Error(`No migration path from token-skein config schema_version ${version}.`);
+    }
+    value = migrate(value);
+    version = typeof value.schemaVersion === "number" ? value.schemaVersion : version + 1;
+  }
+  if (version > CURRENT_CONFIG_SCHEMA_VERSION) {
+    throw new Error(
+      `Unsupported token-skein config schema_version ${version}; this build supports up to ${CURRENT_CONFIG_SCHEMA_VERSION}.`,
+    );
+  }
+  return value as JsonObject;
 }
 
 function merge<T>(base: T, override: unknown): T {
@@ -69,10 +109,22 @@ function merge<T>(base: T, override: unknown): T {
   return result as T;
 }
 
+function numericEnvOverride(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    console.error(`token-skein: ignoring invalid ${name}=${raw} (not a finite number)`);
+    return undefined;
+  }
+  return value;
+}
+
 function environmentOverride(): JsonObject {
   const override: JsonObject = {};
   if (process.env.TOKEN_SKEIN_HOST) override.host = process.env.TOKEN_SKEIN_HOST;
-  if (process.env.TOKEN_SKEIN_PORT) override.port = Number(process.env.TOKEN_SKEIN_PORT);
+  const port = numericEnvOverride("TOKEN_SKEIN_PORT");
+  if (port !== undefined) override.port = port;
   if (process.env.TOKEN_SKEIN_UPSTREAM) override.upstream = process.env.TOKEN_SKEIN_UPSTREAM;
   if (process.env.TOKEN_SKEIN_STORE_DIR) {
     override.storeDirectory = resolve(process.env.TOKEN_SKEIN_STORE_DIR);
@@ -101,7 +153,7 @@ export function configPath(): string {
 }
 
 export async function loadConfig(overrides?: Partial<TokenSkeinConfig>): Promise<TokenSkeinConfig> {
-  let fileConfig: unknown = {};
+  let fileConfig: unknown;
   try {
     fileConfig = JSON.parse(await readFile(configPath(), "utf8"));
   } catch (error) {
@@ -110,7 +162,7 @@ export async function loadConfig(overrides?: Partial<TokenSkeinConfig>): Promise
   }
 
   return merge(
-    merge(merge(DEFAULT_CONFIG, fileConfig), environmentOverride()),
+    merge(merge(DEFAULT_CONFIG, migrateConfigSchema(fileConfig)), environmentOverride()),
     overrides ?? {},
   );
 }

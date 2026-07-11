@@ -2,6 +2,7 @@
 
 import { codexIntegrationSnippets } from "./codex.ts";
 import { configPath, loadConfig } from "./config.ts";
+import { doctor, install, uninstall, verify } from "./install.ts";
 import { startMcpServer } from "./mcp.ts";
 import { MetricsRecorder, UsageRecorder } from "./metrics.ts";
 import { startProxy } from "./proxy.ts";
@@ -21,6 +22,10 @@ Usage:
   token-skein stats                 Show aggregate savings and archive stats
   token-skein cleanup               Remove expired archived contexts
   token-skein codex-snippet         Print Codex config and hook snippets
+  token-skein install               Install the Codex integration (transactional)
+  token-skein uninstall             Remove the Codex integration
+  token-skein doctor                Check prerequisites for the Codex integration
+  token-skein verify                Validate an existing install without mutating anything
   token-skein config                Print active config and its source path
   token-skein --version             Print version
 `;
@@ -86,7 +91,7 @@ async function main(): Promise<void> {
   }
   if (command === "cleanup") {
     const config = await loadConfig();
-    const removed = await new ContextStore(config.storeDirectory).cleanup();
+    const removed = await new ContextStore(config.storeDirectory, config.archive.maxBytes).cleanup();
     console.log(JSON.stringify({ removed }));
     return;
   }
@@ -96,6 +101,28 @@ async function main(): Promise<void> {
     console.log(snippets.configToml);
     console.log("\n# Merge into ~/.codex/hooks.json\n");
     console.log(snippets.hooksJson);
+    return;
+  }
+  if (command === "install") {
+    const result = await install(await loadConfig());
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (command === "uninstall") {
+    const result = await uninstall();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (command === "doctor") {
+    const report = await doctor(await loadConfig());
+    console.log(JSON.stringify(report, null, 2));
+    if (!report.ok) process.exitCode = 1;
+    return;
+  }
+  if (command === "verify") {
+    const report = await verify(await loadConfig());
+    console.log(JSON.stringify(report, null, 2));
+    if (!report.ok) process.exitCode = 1;
     return;
   }
   if (command === "config") {

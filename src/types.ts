@@ -52,7 +52,12 @@ export interface LimitsConfig {
   upstreamTimeoutMs: number;
 }
 
+export interface ArchiveConfig {
+  maxBytes: number;
+}
+
 export interface TokenSkeinConfig {
+  schemaVersion: number;
   host: string;
   port: number;
   upstream: string;
@@ -65,6 +70,7 @@ export interface TokenSkeinConfig {
   shell: ShellConfig;
   economics: EconomicsConfig;
   limits: LimitsConfig;
+  archive: ArchiveConfig;
 }
 
 export type OptimizationKind =

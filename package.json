@@ -13,7 +13,8 @@
     "dashboard": "bun run src/dashboard.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun test"
+    "check": "bun run typecheck && bun test",
+    "license-scan": "bun run scripts/license-scan.ts"
   },
   "keywords": [
     "codex",

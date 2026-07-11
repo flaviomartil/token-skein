@@ -58,7 +58,7 @@ describe("Responses request optimization", () => {
     config.vision.maximumPages = 1;
     config.vision.estimatedTokensPerPage = 50;
     config.vision.minimumSavingsRatio = 1;
-    config.vision.models = ["gpt-5.6"];
+    config.vision.models = ["gpt-5.6-test"];
     const store = new ContextStore(config.storeDirectory);
     const output = Array.from({ length: 300 }, (_, index) => `${index} ${"token-dense-value ".repeat(10)}`).join("\n");
     const result = await optimizeResponsesRequest(requestBody(output), config, store);

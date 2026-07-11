@@ -38,12 +38,13 @@ describe("cache-aware cost", () => {
 
 describe("catalog pricing", () => {
   test("returns unknown for a model without dated pricing", () => {
-    expect(priceModel("gpt-5.4")).toBeNull();
-    const cost = costForModel(usage(), "gpt-5.4");
+    // gpt-5.4-cyber aparece na página de preços sem valores publicados.
+    expect(priceModel("gpt-5.4-cyber")).toBeNull();
+    const cost = costForModel(usage(), "gpt-5.4-cyber");
     expect(cost.priced).toBeFalse();
     expect(cost.totalCost).toBe(0);
     expect(cost.pricingSource).toBeNull();
-    expect(cost.unknownReason).toContain("gpt-5.4");
+    expect(cost.unknownReason).toContain("gpt-5.4-cyber");
   });
 
   test("prices a known catalog model", () => {
@@ -57,6 +58,10 @@ describe("catalog pricing", () => {
     expect(isPriced("gpt-4o")).toBeTrue();
     expect(isPriced("gpt-4o-mini")).toBeTrue();
     expect(isPriced("gpt-4.1")).toBeTrue();
+    expect(isPriced("gpt-5.6-sol")).toBeTrue();
+    expect(isPriced("gpt-5.6-terra")).toBeTrue();
+    expect(isPriced("gpt-5.6-luna")).toBeTrue();
+    expect(isPriced("gpt-5.4")).toBeTrue();
   });
 
   test("isPriced returns false for unpriced models", () => {

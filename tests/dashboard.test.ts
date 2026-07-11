@@ -16,7 +16,7 @@ const fixtureLines = [
     optimizedBytes: 400,
     estimatedTokensBefore: 300,
     estimatedTokensAfter: 120,
-    model: "gpt-5.6",
+    model: "gpt-5.6-sol",
     metadata: { costUsd: 0.002, latencyMs: 120, cacheHit: true },
   }),
   JSON.stringify({
@@ -48,7 +48,7 @@ const fixtureLines = [
     optimizedBytes: 0,
     estimatedTokensBefore: 0,
     estimatedTokensAfter: 0,
-    model: "gpt-5.6",
+    model: "gpt-5.6-sol",
   }),
   "",
 ];
@@ -63,7 +63,7 @@ describe("dashboard aggregate", () => {
   test("parseEventLine accepts a well-formed event", () => {
     const parsed = parseEventLine(fixtureLines[0] as string);
     expect(parsed?.kind).toBe("tool-schema");
-    expect(parsed?.model).toBe("gpt-5.6");
+    expect(parsed?.model).toBe("gpt-5.6-sol");
   });
 
   test("aggregate skips corrupted lines and unknown-kind events without crashing", () => {
@@ -78,7 +78,7 @@ describe("dashboard aggregate", () => {
     expect(summary.tokens.total.tokensAfter).toBe(360);
     expect(summary.tokens.total.tokensSaved).toBe(1440);
     expect(summary.tokens.byKind["tool-schema"]?.tokensSaved).toBe(180);
-    expect(summary.tokens.byModel["gpt-5.6"]?.events).toBe(2);
+    expect(summary.tokens.byModel["gpt-5.6-sol"]?.events).toBe(2);
     expect(summary.tokens.byModel.unknown?.events).toBe(1);
   });
 
@@ -138,7 +138,7 @@ describe("dashboard buildSummary reads usage.jsonl", () => {
   function usageRecord(firstByteMs: number, totalCost: number): string {
     return JSON.stringify({
       timestamp: "2026-07-01T10:00:00.000Z",
-      model: "gpt-5.6",
+      model: "gpt-5.6-sol",
       mode: "optimized",
       streaming: false,
       reported: true,

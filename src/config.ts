@@ -24,7 +24,7 @@ export const DEFAULT_CONFIG: TokenSkeinConfig = {
   },
   vision: {
     enabled: false,
-    models: ["gpt-5.6"],
+    models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
     minimumBytes: 24_000,
     maximumPages: 4,
     estimatedTokensPerPage: 1600,

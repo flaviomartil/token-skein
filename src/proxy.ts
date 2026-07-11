@@ -4,7 +4,6 @@ import { MetricsRecorder, UsageRecorder } from "./metrics.ts";
 import { optimizeResponsesRequest } from "./optimize.ts";
 import { costForModel, unknownCost } from "./pricing.ts";
 import { ContextStore } from "./store.ts";
-import { byteLength } from "./tokenizer.ts";
 import type { TokenSkeinConfig, JsonObject, ReasoningEffort, UsageMode } from "./types.ts";
 
 function json(data: unknown, status = 200): Response {
@@ -15,6 +14,57 @@ function json(data: unknown, status = 200): Response {
       "x-content-type-options": "nosniff",
     },
   });
+}
+
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  if (normalized === "localhost" || normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") return true;
+  if (normalized === "::ffff:127.0.0.1") return true;
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalized);
+  if (ipv4) return Number(ipv4[1]) === 127;
+  return false;
+}
+
+export function loopbackEnforcement(
+  host: string,
+  allowRemote: boolean,
+): { allowed: true } | { allowed: false; reason: string } {
+  if (isLoopbackHost(host) || allowRemote) return { allowed: true };
+  return {
+    allowed: false,
+    reason:
+      `token-skein refuses to bind to non-loopback host "${host}" because ` +
+      "/v1/token-skein/retrieve returns unredacted stored originals without authentication. " +
+      "Set TOKEN_SKEIN_ALLOW_REMOTE=1 to bind remotely on purpose.",
+  };
+}
+
+async function readLimitedBody(request: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!request.body) {
+    const buffer = new Uint8Array(await request.arrayBuffer());
+    return buffer.byteLength > limit ? null : buffer;
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 function truthyHeader(value: string | null): boolean | undefined {
@@ -97,7 +147,18 @@ async function forward(
   const incomingUrl = new URL(request.url);
   const upstreamUrl = new URL(`${incomingUrl.pathname}${incomingUrl.search}`, config.upstream);
   const isResponses = request.method === "POST" && incomingUrl.pathname.endsWith("/responses");
-  let body: BodyInit | null = request.body;
+  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+
+  let rawBody = new Uint8Array(0);
+  if (hasBody) {
+    const read = await readLimitedBody(request, config.limits.maxRequestBytes);
+    if (read === null) {
+      return json({ error: "Request body exceeds the configured size limit." }, 413);
+    }
+    rawBody = read;
+  }
+
+  let body: BodyInit | null = hasBody ? rawBody : null;
   let savedEstimate = 0;
   let model = "unknown";
   let mode: UsageMode = "optimized";
@@ -105,10 +166,7 @@ async function forward(
   let pairId = "";
 
   if (isResponses) {
-    const raw = await request.text();
-    if (byteLength(raw) > config.limits.maxRequestBytes) {
-      return json({ error: "Request body exceeds the configured size limit." }, 413);
-    }
+    const raw = new TextDecoder().decode(rawBody);
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -248,6 +306,8 @@ async function recordUsage(args: RecordUsageArgs): Promise<void> {
 
 export async function startProxy(overrides?: Partial<TokenSkeinConfig>): Promise<ReturnType<typeof Bun.serve>> {
   const config = await loadConfig(overrides);
+  const decision = loopbackEnforcement(config.host, process.env.TOKEN_SKEIN_ALLOW_REMOTE === "1");
+  if (!decision.allowed) throw new Error(decision.reason);
   const store = new ContextStore(config.storeDirectory);
   const metrics = new MetricsRecorder(config.eventsPath);
   const usage = new UsageRecorder(config.economics.usagePath);

@@ -30,6 +30,16 @@ export function commandIsSafeToRewrite(command: string): boolean {
   return SAFE_COMMAND.test(command);
 }
 
+export function commandIsSafeToRun(command: string): boolean {
+  if (!command || SHELL_CONTROL.test(command)) return false;
+  if (UNSAFE_COMMAND.test(command)) return false;
+  if (UNSAFE_READ_OPTIONS.test(command)) return false;
+  if (/token-skein|src\/cli\.ts\s+shell/.test(command)) return false;
+  const trimmed = command.trimStart();
+  const underlying = trimmed.startsWith("rtk ") ? trimmed.slice(4) : trimmed;
+  return SAFE_COMMAND.test(underlying);
+}
+
 export function rewriteWithRtk(command: string): string | null {
   const result = Bun.spawnSync(["rtk", "rewrite", command], {
     stdout: "pipe",
@@ -72,6 +82,9 @@ export async function runFilteredShell(encoded: string, config: TokenSkeinConfig
     command = Buffer.from(encoded, "base64url").toString("utf8");
   } catch {
     throw new Error("Invalid encoded shell command.");
+  }
+  if (!commandIsSafeToRun(command)) {
+    throw new Error("Refusing to run a shell command that failed output-filter safety revalidation.");
   }
   const child = Bun.spawn(["/usr/bin/env", "zsh", "-lc", command], {
     stdout: "pipe",

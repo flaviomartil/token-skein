@@ -42,6 +42,16 @@ export interface ShellConfig {
   maximumLines: number;
 }
 
+export interface EconomicsConfig {
+  enabled: boolean;
+  usagePath: string;
+}
+
+export interface LimitsConfig {
+  maxRequestBytes: number;
+  upstreamTimeoutMs: number;
+}
+
 export interface TokenSkeinConfig {
   host: string;
   port: number;
@@ -53,6 +63,8 @@ export interface TokenSkeinConfig {
   style: StyleConfig;
   routing: RoutingConfig;
   shell: ShellConfig;
+  economics: EconomicsConfig;
+  limits: LimitsConfig;
 }
 
 export type OptimizationKind =
@@ -99,4 +111,40 @@ export interface RequestOptimizationResult {
   body: JsonObject;
   events: OptimizationEvent[];
   transformed: boolean;
+}
+
+export interface ProviderUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  imageInputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+}
+
+export type UsageMode = "baseline" | "optimized";
+
+export interface CostBreakdown {
+  priced: boolean;
+  currency: "usd";
+  pricingSource: string | null;
+  uncachedInputCost: number;
+  cachedInputCost: number;
+  outputCost: number;
+  totalCost: number;
+  unknownReason: string | null;
+}
+
+export interface UsageRecord {
+  timestamp: string;
+  model: string;
+  mode: UsageMode;
+  streaming: boolean;
+  reported: boolean;
+  fixture: string | null;
+  configHash: string;
+  baselineId: string;
+  firstByteMs: number;
+  usage: ProviderUsage;
+  cost: CostBreakdown;
 }

@@ -3,7 +3,7 @@
 import { codexIntegrationSnippets } from "./codex.ts";
 import { configPath, loadConfig } from "./config.ts";
 import { startMcpServer } from "./mcp.ts";
-import { MetricsRecorder } from "./metrics.ts";
+import { MetricsRecorder, UsageRecorder } from "./metrics.ts";
 import { startProxy } from "./proxy.ts";
 import { buildCodexHookResponse, runFilteredShell, type CodexHookInput } from "./shell.ts";
 import { ContextStore } from "./store.ts";
@@ -73,8 +73,15 @@ async function main(): Promise<void> {
   if (command === "stats") {
     const config = await loadConfig();
     const metrics = new MetricsRecorder(config.eventsPath);
+    const usage = new UsageRecorder(config.economics.usagePath);
     const store = new ContextStore(config.storeDirectory);
-    console.log(JSON.stringify({ metrics: await metrics.summary(), store: await store.stats() }, null, 2));
+    console.log(
+      JSON.stringify(
+        { metrics: await metrics.summary(), usage: await usage.summary(), store: await store.stats() },
+        null,
+        2,
+      ),
+    );
     return;
   }
   if (command === "cleanup") {

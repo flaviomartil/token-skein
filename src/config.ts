@@ -42,6 +42,14 @@ export const DEFAULT_CONFIG: TokenSkeinConfig = {
     minimumBytes: 3000,
     maximumLines: 160,
   },
+  economics: {
+    enabled: true,
+    usagePath: join(home, ".token-skein", "usage.jsonl"),
+  },
+  limits: {
+    maxRequestBytes: 8_388_608,
+    upstreamTimeoutMs: 120_000,
+  },
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -72,6 +80,17 @@ function environmentOverride(): JsonObject {
   if (process.env.TOKEN_SKEIN_EVENTS_PATH) {
     override.eventsPath = resolve(process.env.TOKEN_SKEIN_EVENTS_PATH);
   }
+  if (process.env.TOKEN_SKEIN_USAGE_PATH) {
+    override.economics = { usagePath: resolve(process.env.TOKEN_SKEIN_USAGE_PATH) };
+  }
+  const limits: JsonObject = {};
+  if (process.env.TOKEN_SKEIN_MAX_REQUEST_BYTES) {
+    limits.maxRequestBytes = Number(process.env.TOKEN_SKEIN_MAX_REQUEST_BYTES);
+  }
+  if (process.env.TOKEN_SKEIN_UPSTREAM_TIMEOUT_MS) {
+    limits.upstreamTimeoutMs = Number(process.env.TOKEN_SKEIN_UPSTREAM_TIMEOUT_MS);
+  }
+  if (Object.keys(limits).length > 0) override.limits = limits;
   return override;
 }
 

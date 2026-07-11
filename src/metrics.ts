@@ -1,7 +1,7 @@
 import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { OptimizationEvent, OptimizationKind } from "./types.ts";
+import type { OptimizationEvent, OptimizationKind, UsageMode, UsageRecord } from "./types.ts";
 
 export interface KindStats {
   events: number;
@@ -79,5 +79,112 @@ export class MetricsRecorder {
     }
     for (const stats of Object.values(byKind)) finalize(stats);
     return { ...finalize(total), byKind };
+  }
+}
+
+export interface UsageTotals {
+  records: number;
+  pricedRecords: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  billableTokens: number;
+  billedCost: number;
+}
+
+export interface UsagePair {
+  baselineId: string;
+  model: string;
+  priced: boolean;
+  billableTokensSaved: number;
+  billedCostSaved: number | null;
+}
+
+export interface UsageSummary {
+  records: number;
+  byMode: Record<UsageMode, UsageTotals>;
+  pairs: UsagePair[];
+}
+
+function emptyTotals(): UsageTotals {
+  return {
+    records: 0,
+    pricedRecords: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    billableTokens: 0,
+    billedCost: 0,
+  };
+}
+
+function accumulate(totals: UsageTotals, record: UsageRecord): void {
+  totals.records += 1;
+  totals.inputTokens += record.usage.inputTokens;
+  totals.cachedInputTokens += record.usage.cachedInputTokens;
+  totals.outputTokens += record.usage.outputTokens;
+  totals.reasoningTokens += record.usage.reasoningTokens;
+  totals.billableTokens +=
+    Math.max(0, record.usage.inputTokens - record.usage.cachedInputTokens) + record.usage.outputTokens;
+  if (record.cost.priced) {
+    totals.pricedRecords += 1;
+    totals.billedCost += record.cost.totalCost;
+  }
+}
+
+export class UsageRecorder {
+  constructor(private readonly usagePath: string) {}
+
+  async record(record: UsageRecord): Promise<void> {
+    await mkdir(dirname(this.usagePath), { recursive: true, mode: 0o700 });
+    await appendFile(this.usagePath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    await chmod(this.usagePath, 0o600);
+  }
+
+  async summary(): Promise<UsageSummary> {
+    let raw = "";
+    try {
+      raw = await readFile(this.usagePath, "utf8");
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String(error.code) : "";
+      if (code !== "ENOENT") throw error;
+    }
+    const byMode: Record<UsageMode, UsageTotals> = {
+      baseline: emptyTotals(),
+      optimized: emptyTotals(),
+    };
+    const groups = new Map<string, { model: string; baseline: UsageTotals; optimized: UsageTotals }>();
+    let records = 0;
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line) continue;
+      let record: UsageRecord;
+      try {
+        record = JSON.parse(line) as UsageRecord;
+      } catch {
+        continue;
+      }
+      records += 1;
+      accumulate(byMode[record.mode], record);
+      const group =
+        groups.get(record.baselineId) ??
+        { model: record.model, baseline: emptyTotals(), optimized: emptyTotals() };
+      accumulate(group[record.mode], record);
+      groups.set(record.baselineId, group);
+    }
+    const pairs: UsagePair[] = [];
+    for (const [id, group] of groups) {
+      if (group.baseline.records === 0 || group.optimized.records === 0) continue;
+      const priced = group.baseline.pricedRecords > 0 && group.optimized.pricedRecords > 0;
+      pairs.push({
+        baselineId: id,
+        model: group.model,
+        priced,
+        billableTokensSaved: group.baseline.billableTokens - group.optimized.billableTokens,
+        billedCostSaved: priced ? group.baseline.billedCost - group.optimized.billedCost : null,
+      });
+    }
+    return { records, byMode, pairs };
   }
 }

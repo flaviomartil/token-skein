@@ -10,6 +10,7 @@
     "start": "bun run src/cli.ts",
     "proxy": "bun run src/cli.ts proxy",
     "mcp": "bun run src/cli.ts mcp",
+    "dashboard": "bun run src/dashboard.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run typecheck && bun test"

@@ -38,12 +38,15 @@ flowchart LR
     U[OpenAI Responses API]
     D[(Protected local context store)]
     E[(Metrics JSONL)]
+    N[(Usage JSONL)]
 
     subgraph L[TokenSkein]
       P[Responses proxy]
       Q[Request policy pipeline]
       M[MCP server]
       H[Codex hook and shell filter]
+      A[Economics usage recorder]
+      V[Dashboard server]
     end
 
     C -->|Responses request| P
@@ -61,6 +64,9 @@ flowchart LR
     Q --> E
     M --> E
     H --> E
+    P -->|provider usage| A
+    A --> N
+    V -->|read| E
 ```
 
 Inside the request policy pipeline, operations run in this order:
@@ -101,6 +107,12 @@ The editable source is [docs/architecture.excalidraw](docs/architecture.excalidr
 - **Strict shell allowlist.** Hook rewriting is limited to recognized read/verification commands. Destructive, compound, redirected, or ambiguous commands are not rewritten or auto-approved.
 - **Measurement without inflated claims.** Current statistics are tokenizer-based estimates. Provider-reported usage and cache-aware dollar accounting are planned.
 
+## Dashboard
+
+![TokenSkein savings dashboard](docs/dashboard.png)
+
+The dashboard reads the same metrics JSONL used by `token-skein stats` and renders estimated token savings, cost and latency where recorded, cache hit/miss counts, and an hourly series, broken down by optimization mode and model. Start it with `bun run dashboard` (equivalent to `bun run src/dashboard.ts`); it listens on `127.0.0.1:8790` by default, overridable with `TOKEN_SKEIN_DASHBOARD_PORT`. It binds to loopback only and is not reachable over the network.
+
 ## What was ported
 
 The implementation is a TypeScript/Bun reimplementation of selected concepts, not a concatenation of the original projects.
@@ -134,8 +146,6 @@ The prioritized backlog is tracked in [PLAN.md](PLAN.md). The main planned work 
 - tune visual pages per model and reject OCR-hostile or exactness-critical content;
 - add native shell reducers so RTK remains optional rather than required;
 - add MCP resources and indexed retrieval for large archives;
-- provide transactional install, verify, and uninstall commands for Codex;
-- add a small local savings dashboard after the metrics are trustworthy;
 - evaluate other provider protocols only after the Responses path is stable.
 
 ## Quick start
@@ -197,6 +207,9 @@ Environment overrides:
 | `TOKEN_SKEIN_STORE_DIR` | Local archive directory |
 | `TOKEN_SKEIN_EVENTS_PATH` | Metrics JSONL path |
 | `TOKEN_SKEIN_BIN` | Exact command used by the hook wrapper |
+| `TOKEN_SKEIN_DASHBOARD_PORT` | Dashboard bind port (default `8790`), read directly by `bun run dashboard` |
+
+The archive quota is a config file field, not an environment variable: `archive.maxBytes` (default 200 MiB) caps the local context store, and once exceeded the least-recently-touched entries are evicted first.
 
 Request-level controls:
 
@@ -219,10 +232,16 @@ token-skein shell --encoded DATA  execute a hook-approved command and filter out
 token-skein stats                 show estimated savings and archive statistics
 token-skein cleanup               remove expired archive entries
 token-skein codex-snippet         print Codex integration snippets
+token-skein install               install the Codex integration (transactional)
+token-skein uninstall             remove the Codex integration
+token-skein doctor                check prerequisites for the Codex integration
+token-skein verify                validate an existing install without mutating anything
 token-skein config                print active configuration
 ```
 
 Until the package is linked globally, replace `token-skein` with `bun run src/cli.ts`.
+
+The dashboard (`bun run dashboard`) and the license scanner (`bun run license-scan`) are separate Bun scripts, not `token-skein` subcommands.
 
 ## MCP tools
 
@@ -248,7 +267,7 @@ The MCP server uses stdio and emits protocol traffic only on stdout; diagnostics
 - Only older `function_call_output` strings are compacted automatically; arbitrary conversation history is not yet rewritten.
 - Visual pages are capped. Omitted material remains available through the archive.
 - The current effort router is heuristic and English-biased.
-- The proxy has no dashboard, distributed store, encryption-at-rest, or multi-user isolation.
+- The proxy has no distributed store, encryption-at-rest, or multi-user isolation.
 
 ## Verification
 

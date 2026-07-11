@@ -59,16 +59,16 @@ export class SseUsageExtractor {
   push(text: string): void {
     if (this.found) return;
     this.pending += text;
-    let boundary = this.pending.indexOf("\n\n");
-    while (boundary !== -1) {
-      const block = this.pending.slice(0, boundary);
-      this.pending = this.pending.slice(boundary + 2);
+    for (;;) {
+      const match = /\r?\n\r?\n/.exec(this.pending);
+      if (!match) break;
+      const block = this.pending.slice(0, match.index);
+      this.pending = this.pending.slice(match.index + match[0].length);
       this.consume(block);
       if (this.found) {
         this.pending = "";
         return;
       }
-      boundary = this.pending.indexOf("\n\n");
     }
     if (this.pending.length > MAX_EVENT_BYTES) {
       this.pending = this.pending.slice(-MAX_EVENT_BYTES);
@@ -81,7 +81,7 @@ export class SseUsageExtractor {
       .split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
-      .join("");
+      .join("\n");
     if (!data || data === "[DONE]") return;
     try {
       this.found = parseCompletedUsage(JSON.parse(data));

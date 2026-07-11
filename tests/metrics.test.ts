@@ -86,6 +86,39 @@ describe("MetricsRecorder.summary validation", () => {
   });
 });
 
+describe("MetricsRecorder.summary token split", () => {
+  test("keeps saved and added tokens separate instead of netting them", async () => {
+    const saving = JSON.stringify({
+      timestamp: "t",
+      kind: "tool-schema",
+      source: "proxy",
+      originalBytes: 1000,
+      optimizedBytes: 400,
+      estimatedTokensBefore: 300,
+      estimatedTokensAfter: 120,
+    });
+    const adding = JSON.stringify({
+      timestamp: "t",
+      kind: "style",
+      source: "proxy",
+      originalBytes: 200,
+      optimizedBytes: 520,
+      estimatedTokensBefore: 100,
+      estimatedTokensAfter: 260,
+    });
+    const path = await tmpFile("events.jsonl", [saving, adding].join("\n"));
+
+    const summary = await new MetricsRecorder(path).summary();
+
+    expect(summary.estimatedTokensSaved).toBe(180);
+    expect(summary.estimatedTokensAdded).toBe(160);
+    expect(summary.byKind["tool-schema"]?.estimatedTokensSaved).toBe(180);
+    expect(summary.byKind["tool-schema"]?.estimatedTokensAdded).toBe(0);
+    expect(summary.byKind.style?.estimatedTokensAdded).toBe(160);
+    expect(summary.byKind.style?.estimatedTokensSaved).toBe(0);
+  });
+});
+
 describe("UsageRecorder.summary validation", () => {
   test("skips records missing usage or with an unknown mode without crashing", async () => {
     const valid = usageLine({ mode: "optimized", baselineId: "b1", fixture: "fx", input: 900, cached: 300, output: 250, reasoning: 90 });

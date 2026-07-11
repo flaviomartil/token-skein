@@ -67,4 +67,16 @@ describe("Responses request optimization", () => {
     expect(Array.isArray(result.body.input) ? result.body.input.length : 0).toBe(3);
     expect(JSON.stringify(result.body.input)).toContain("input_image");
   });
+
+  test("removes the archived blob when compaction is rejected", async () => {
+    const config = await testConfig();
+    const store = new ContextStore(config.storeDirectory);
+    const output = "a".repeat(4000);
+    const result = await optimizeResponsesRequest(requestBody(output), config, store);
+    const kinds = result.events.map((row) => row.kind);
+
+    expect(kinds).not.toContain("recoverable-text");
+    expect(kinds).not.toContain("vision");
+    expect((await store.stats()).entries).toBe(0);
+  });
 });

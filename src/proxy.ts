@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+
 import { loadConfig } from "./config.ts";
 import { baselineId, captureUsage, configHash, emptyUsage } from "./economics.ts";
 import { MetricsRecorder, UsageRecorder } from "./metrics.ts";
@@ -108,10 +110,35 @@ function responseHeaders(source: Headers): Headers {
   return headers;
 }
 
-async function handleRetrieve(request: Request, store: ContextStore): Promise<Response> {
+function clampMaxChars(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 80_000;
+  return Math.min(Math.floor(value), 500_000);
+}
+
+function authorizeRequest(request: Request): Response | null {
+  const expected = process.env.TOKEN_SKEIN_AUTH_TOKEN;
+  if (expected === undefined) return null;
+  if (expected === "") {
+    console.error("token-skein: TOKEN_SKEIN_AUTH_TOKEN is set but empty; denying protected endpoints.");
+    return json({ error: "Unauthorized." }, 401);
+  }
+  const header = request.headers.get("authorization") ?? "";
+  const match = /^Bearer\s+(.*)$/is.exec(header);
+  const presented = match?.[1] ?? "";
+  const presentedHash = createHash("sha256").update(presented).digest();
+  const expectedHash = createHash("sha256").update(expected).digest();
+  if (timingSafeEqual(presentedHash, expectedHash)) return null;
+  return json({ error: "Unauthorized." }, 401);
+}
+
+async function handleRetrieve(request: Request, store: ContextStore, limit: number): Promise<Response> {
+  const raw = await readLimitedBody(request, limit);
+  if (raw === null) {
+    return json({ error: "Request body exceeds the configured size limit." }, 413);
+  }
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(new TextDecoder().decode(raw));
   } catch {
     return json({ error: "Expected a JSON body." }, 400);
   }
@@ -125,7 +152,7 @@ async function handleRetrieve(request: Request, store: ContextStore): Promise<Re
   const content = await store.retrieve(
     record.reference,
     typeof record.query === "string" ? record.query : undefined,
-    typeof record.maxChars === "number" ? record.maxChars : 80_000,
+    clampMaxChars(record.maxChars),
   );
   if (content === null) return json({ error: "Context not found or expired." }, 404);
   return json({ reference: record.reference, content });
@@ -304,11 +331,15 @@ async function recordUsage(args: RecordUsageArgs): Promise<void> {
   }
 }
 
+export function createStore(config: TokenSkeinConfig): ContextStore {
+  return new ContextStore(config.storeDirectory, config.archive.maxBytes);
+}
+
 export async function startProxy(overrides?: Partial<TokenSkeinConfig>): Promise<ReturnType<typeof Bun.serve>> {
   const config = await loadConfig(overrides);
   const decision = loopbackEnforcement(config.host, process.env.TOKEN_SKEIN_ALLOW_REMOTE === "1");
   if (!decision.allowed) throw new Error(decision.reason);
-  const store = new ContextStore(config.storeDirectory);
+  const store = createStore(config);
   const metrics = new MetricsRecorder(config.eventsPath);
   const usage = new UsageRecorder(config.economics.usagePath);
   const cfgHash = configHash(config);
@@ -322,6 +353,8 @@ export async function startProxy(overrides?: Partial<TokenSkeinConfig>): Promise
         return json({ status: "ok", service: "token-skein", upstream: config.upstream });
       }
       if (url.pathname === "/v1/token-skein/stats" && request.method === "GET") {
+        const denied = authorizeRequest(request);
+        if (denied) return denied;
         return json({
           metrics: await metrics.summary(),
           usage: await usage.summary(),
@@ -329,7 +362,9 @@ export async function startProxy(overrides?: Partial<TokenSkeinConfig>): Promise
         });
       }
       if (url.pathname === "/v1/token-skein/retrieve" && request.method === "POST") {
-        return handleRetrieve(request, store);
+        const denied = authorizeRequest(request);
+        if (denied) return denied;
+        return handleRetrieve(request, store, config.limits.maxRequestBytes);
       }
       return forward(request, config, store, metrics, usage, cfgHash);
     },

@@ -17,9 +17,13 @@ function shellQuote(value: string): string {
 }
 
 function ownInvocation(): string {
-  if (process.env.TOKEN_SKEIN_BIN) return process.env.TOKEN_SKEIN_BIN;
+  if (process.env.TOKEN_SKEIN_BIN) return shellQuote(process.env.TOKEN_SKEIN_BIN);
   const script = resolve(process.argv[1] ?? "src/cli.ts");
   return `${shellQuote(process.execPath)} ${shellQuote(script)}`;
+}
+
+export function shellSpawnArgs(command: string): string[] {
+  return ["/usr/bin/env", "zsh", "-f", "-c", command];
 }
 
 export function commandIsSafeToRewrite(command: string): boolean {
@@ -66,10 +70,11 @@ export function buildCodexHookResponse(
   const rewritten = config.shell.preferRtk ? rewriteWithRtk(rawCommand) ?? rawCommand : rawCommand;
   const encoded = Buffer.from(rewritten, "utf8").toString("base64url");
   const command = `${ownInvocation()} shell --encoded ${encoded}`;
+  const autoAllow = config.shell.autoAllow === true;
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      permissionDecision: "allow",
+      permissionDecision: autoAllow ? "allow" : "ask",
       permissionDecisionReason: "TokenSkein safe output-filter rewrite",
       updatedInput: { ...input.tool_input, command },
     },
@@ -86,7 +91,7 @@ export async function runFilteredShell(encoded: string, config: TokenSkeinConfig
   if (!commandIsSafeToRun(command)) {
     throw new Error("Refusing to run a shell command that failed output-filter safety revalidation.");
   }
-  const child = Bun.spawn(["/usr/bin/env", "zsh", "-lc", command], {
+  const child = Bun.spawn(shellSpawnArgs(command), {
     stdout: "pipe",
     stderr: "pipe",
     env: process.env,
@@ -105,7 +110,7 @@ export async function runFilteredShell(encoded: string, config: TokenSkeinConfig
     return exitCode;
   }
 
-  const store = new ContextStore(config.storeDirectory);
+  const store = new ContextStore(config.storeDirectory, config.archive.maxBytes);
   const metrics = new MetricsRecorder(config.eventsPath);
   const compacted = await compactRecoverably(combined, store, {
     kind: "shell_output",

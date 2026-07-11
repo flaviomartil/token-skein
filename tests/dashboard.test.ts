@@ -1,6 +1,11 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, test } from "bun:test";
 
 import { aggregate, parseEventLine } from "../src/dashboard/aggregate.ts";
+import { buildSummary } from "../src/dashboard.ts";
 
 const fixtureLines = [
   JSON.stringify({
@@ -126,5 +131,86 @@ describe("dashboard aggregate", () => {
     expect(summary.cost.totalUsd).toBe("unknown");
     expect(summary.latency).toBe("unknown");
     expect(summary.series).toEqual([]);
+  });
+});
+
+describe("dashboard buildSummary reads usage.jsonl", () => {
+  function usageRecord(firstByteMs: number, totalCost: number): string {
+    return JSON.stringify({
+      timestamp: "2026-07-01T10:00:00.000Z",
+      model: "gpt-5.6",
+      mode: "optimized",
+      streaming: false,
+      reported: true,
+      fixture: null,
+      configHash: "cfg",
+      baselineId: "b1",
+      firstByteMs,
+      usage: {
+        inputTokens: 100,
+        cachedInputTokens: 0,
+        imageInputTokens: 0,
+        outputTokens: 50,
+        reasoningTokens: 0,
+        totalTokens: 150,
+      },
+      cost: {
+        priced: true,
+        currency: "usd",
+        pricingSource: "2026-01-15",
+        uncachedInputCost: 0,
+        cachedInputCost: 0,
+        outputCost: 0,
+        totalCost,
+        unknownReason: null,
+      },
+    });
+  }
+
+  test("populates real cost and latency and splits saved vs added tokens", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "token-skein-dashboard-"));
+    const eventsPath = join(dir, "events.jsonl");
+    const usagePath = join(dir, "usage.jsonl");
+
+    await writeFile(
+      usagePath,
+      [usageRecord(100, 0.01), usageRecord(300, 0.03), "totally not json }{"].join("\n"),
+      "utf8",
+    );
+
+    const savingEvent = JSON.stringify({
+      timestamp: "2026-07-01T10:00:00.000Z",
+      kind: "tool-schema",
+      source: "proxy",
+      originalBytes: 1000,
+      optimizedBytes: 400,
+      estimatedTokensBefore: 300,
+      estimatedTokensAfter: 120,
+    });
+    const addingEvent = JSON.stringify({
+      timestamp: "2026-07-01T10:05:00.000Z",
+      kind: "style",
+      source: "proxy",
+      originalBytes: 200,
+      optimizedBytes: 520,
+      estimatedTokensBefore: 100,
+      estimatedTokensAfter: 260,
+    });
+    await writeFile(eventsPath, [savingEvent, addingEvent, "broken line {{{"].join("\n"), "utf8");
+
+    const summary = await buildSummary(eventsPath, usagePath);
+
+    expect(summary.cost.totalUsd).toBe(0.04);
+    expect(summary.cost.pricedRecords).toBe(2);
+    expect(summary.latency).not.toBe("unknown");
+    if (summary.latency !== "unknown") {
+      expect(summary.latency.samples).toBe(2);
+      expect(summary.latency.averageMs).toBe(200);
+      expect(summary.latency.p50Ms).toBe(100);
+      expect(summary.latency.p95Ms).toBe(300);
+    }
+    expect(summary.tokens.total.tokensSaved).toBe(180);
+    expect(summary.tokens.total.tokensAdded).toBe(160);
+    expect(summary.usageSkippedLines).toBe(1);
   });
 });

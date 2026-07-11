@@ -180,6 +180,8 @@ export async function optimizeResponsesRequest(
             metadata: { strategy: compacted.strategy },
           }),
         );
+      } else if (compacted.reference) {
+        await store.remove(compacted.reference);
       }
       nextInput.push(item);
     }

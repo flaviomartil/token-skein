@@ -8,6 +8,7 @@ export interface KindStats {
   estimatedTokensBefore: number;
   estimatedTokensAfter: number;
   estimatedTokensSaved: number;
+  estimatedTokensAdded: number;
   savingsPercent: number;
 }
 
@@ -45,15 +46,12 @@ function emptyStats(): KindStats {
     estimatedTokensBefore: 0,
     estimatedTokensAfter: 0,
     estimatedTokensSaved: 0,
+    estimatedTokensAdded: 0,
     savingsPercent: 0,
   };
 }
 
 function finalize(stats: KindStats): KindStats {
-  stats.estimatedTokensSaved = Math.max(
-    0,
-    stats.estimatedTokensBefore - stats.estimatedTokensAfter,
-  );
   stats.savingsPercent =
     stats.estimatedTokensBefore > 0
       ? Number(((stats.estimatedTokensSaved / stats.estimatedTokensBefore) * 100).toFixed(1))
@@ -99,14 +97,21 @@ export class MetricsRecorder {
         skippedLines += 1;
         continue;
       }
+      const delta = event.estimatedTokensBefore - event.estimatedTokensAfter;
+      const saved = delta > 0 ? delta : 0;
+      const added = delta < 0 ? -delta : 0;
       const target = byKind[event.kind] ?? emptyStats();
       target.events += 1;
       target.estimatedTokensBefore += event.estimatedTokensBefore;
       target.estimatedTokensAfter += event.estimatedTokensAfter;
+      target.estimatedTokensSaved += saved;
+      target.estimatedTokensAdded += added;
       byKind[event.kind] = target;
       total.events += 1;
       total.estimatedTokensBefore += event.estimatedTokensBefore;
       total.estimatedTokensAfter += event.estimatedTokensAfter;
+      total.estimatedTokensSaved += saved;
+      total.estimatedTokensAdded += added;
     }
     for (const stats of Object.values(byKind)) finalize(stats);
     return { ...finalize(total), skippedLines, byKind };
@@ -288,4 +293,107 @@ export class UsageRecorder {
     }
     return { records, skippedLines, byMode, pairs };
   }
+}
+
+export interface UsageCostInsight {
+  totalUsd: number | "unknown";
+  pricedRecords: number;
+  unpricedRecords: number;
+}
+
+export interface UsageLatencyInsight {
+  averageMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  samples: number;
+}
+
+export interface UsageInsights {
+  cost: UsageCostInsight;
+  latency: UsageLatencyInsight | "unknown";
+  records: number;
+  skippedLines: number;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function round1(value: number): number {
+  return Number(value.toFixed(1));
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const rank = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
+  return sorted[Math.max(0, rank)] ?? 0;
+}
+
+export async function readUsageInsights(usagePath: string): Promise<UsageInsights> {
+  let raw = "";
+  try {
+    raw = await readFile(usagePath, "utf8");
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? String(error.code) : "";
+    if (code !== "ENOENT") throw error;
+  }
+
+  const latencySamples: number[] = [];
+  let costTotal = 0;
+  let pricedRecords = 0;
+  let unpricedRecords = 0;
+  let records = 0;
+  let skippedLines = 0;
+
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      skippedLines += 1;
+      continue;
+    }
+    if (!isPlainObject(parsed)) {
+      skippedLines += 1;
+      continue;
+    }
+    records += 1;
+
+    if (isFiniteNumber(parsed.firstByteMs) && parsed.firstByteMs >= 0) {
+      latencySamples.push(parsed.firstByteMs);
+    }
+
+    if (isPlainObject(parsed.cost)) {
+      const cost = parsed.cost;
+      if (cost.priced === true && isFiniteNumber(cost.totalCost)) {
+        costTotal += cost.totalCost;
+        pricedRecords += 1;
+      } else {
+        unpricedRecords += 1;
+      }
+    }
+  }
+
+  const sorted = [...latencySamples].sort((a, b) => a - b);
+  const latency: UsageLatencyInsight | "unknown" =
+    sorted.length > 0
+      ? {
+          averageMs: round1(sorted.reduce((sum, value) => sum + value, 0) / sorted.length),
+          p50Ms: round1(percentile(sorted, 50)),
+          p95Ms: round1(percentile(sorted, 95)),
+          samples: sorted.length,
+        }
+      : "unknown";
+
+  return {
+    cost: {
+      totalUsd: pricedRecords > 0 ? Number(costTotal.toFixed(6)) : "unknown",
+      pricedRecords,
+      unpricedRecords,
+    },
+    latency,
+    records,
+    skippedLines,
+  };
 }

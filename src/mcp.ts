@@ -10,7 +10,7 @@ import { countTextTokens } from "./tokenizer.ts";
 
 export async function startMcpServer(): Promise<void> {
   const config = await loadConfig();
-  const store = new ContextStore(config.storeDirectory);
+  const store = new ContextStore(config.storeDirectory, config.archive.maxBytes);
   const metrics = new MetricsRecorder(config.eventsPath);
   const server = new McpServer({ name: "token-skein", version: "0.1.0" });
 

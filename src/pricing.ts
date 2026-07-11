@@ -20,6 +20,10 @@ export function priceModel(model: string): ModelPricing | null {
   return pricing;
 }
 
+export function isPriced(model: string): boolean {
+  return priceModel(model) !== null;
+}
+
 export function unknownCost(reason: string): CostBreakdown {
   return {
     priced: false,

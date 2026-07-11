@@ -40,6 +40,7 @@ export interface ShellConfig {
   preferRtk: boolean;
   minimumBytes: number;
   maximumLines: number;
+  autoAllow: boolean;
 }
 
 export interface EconomicsConfig {

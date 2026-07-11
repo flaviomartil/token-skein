@@ -79,7 +79,7 @@ async function main(): Promise<void> {
     const config = await loadConfig();
     const metrics = new MetricsRecorder(config.eventsPath);
     const usage = new UsageRecorder(config.economics.usagePath);
-    const store = new ContextStore(config.storeDirectory);
+    const store = new ContextStore(config.storeDirectory, config.archive.maxBytes);
     console.log(
       JSON.stringify(
         { metrics: await metrics.summary(), usage: await usage.summary(), store: await store.stats() },

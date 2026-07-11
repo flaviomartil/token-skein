@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeCost, costForModel, priceModel, type ModelPricing } from "../src/pricing.ts";
+import { computeCost, costForModel, isPriced, priceModel, type ModelPricing } from "../src/pricing.ts";
 import type { ProviderUsage } from "../src/types.ts";
 
 const pricing: ModelPricing = { input: 2, cachedInput: 0.5, output: 8, source: "2026-01-15" };
@@ -51,5 +51,18 @@ describe("catalog pricing", () => {
     expect(cost.priced).toBeTrue();
     expect(cost.pricingSource).not.toBeNull();
     expect(cost.totalCost).toBeGreaterThan(0);
+  });
+
+  test("isPriced returns true for catalog models", () => {
+    expect(isPriced("gpt-4o")).toBeTrue();
+    expect(isPriced("gpt-4o-mini")).toBeTrue();
+    expect(isPriced("gpt-4.1")).toBeTrue();
+  });
+
+  test("isPriced returns false for unpriced models", () => {
+    expect(isPriced("gpt-5.6")).toBeFalse();
+    const cost = costForModel(usage(), "gpt-5.6");
+    expect(cost.priced).toBeFalse();
+    expect(cost.unknownReason).toContain("gpt-5.6");
   });
 });

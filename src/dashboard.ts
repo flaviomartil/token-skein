@@ -2,8 +2,9 @@
 
 import { readFile } from "node:fs/promises";
 
-import { aggregate, type DashboardSummary } from "./dashboard/aggregate.ts";
+import { aggregate, parseEventLine, type DashboardSummary, type TokenStats } from "./dashboard/aggregate.ts";
 import { loadConfig } from "./config.ts";
+import { readUsageInsights, type UsageCostInsight, type UsageLatencyInsight } from "./metrics.ts";
 
 const PAGE = `<!doctype html>
 <html lang="en">
@@ -105,11 +106,12 @@ fetch("/api/summary").then(function (r) { return r.json(); }).then(function (s) 
     " | " + s.totalEvents + " events | " + s.skippedLines + " skipped lines";
 
   var cost = s.cost.totalUsd === "unknown" ? "unknown" : "$" + s.cost.totalUsd.toFixed(4);
-  var latency = s.latency === "unknown" ? "unknown" : s.latency.averageMs + "ms avg / " + s.latency.p95Ms + "ms p95";
+  var latency = s.latency === "unknown" ? "unknown" : s.latency.p50Ms + "ms p50 / " + s.latency.p95Ms + "ms p95";
 
   document.getElementById("cards").innerHTML =
     card("Total events", s.totalEvents) +
     card("Tokens saved", s.tokens.total.tokensSaved) +
+    card("Tokens added", s.tokens.total.tokensAdded, s.tokens.total.tokensAdded > 0 ? "warn" : "neutral") +
     card("Savings %", s.tokens.total.savingsPercent + "%") +
     card("Cost", cost, s.cost.totalUsd === "unknown" ? "warn" : "neutral") +
     card("Latency", latency, s.latency === "unknown" ? "warn" : "neutral") +
@@ -146,8 +148,48 @@ async function readEventLines(eventsPath: string): Promise<string[]> {
   }
 }
 
-export async function buildSummary(eventsPath: string): Promise<DashboardSummary> {
-  return aggregate(await readEventLines(eventsPath));
+type TotalTokens = TokenStats & { tokensAdded: number };
+
+interface DashboardView extends Omit<DashboardSummary, "cost" | "latency" | "tokens"> {
+  cost: UsageCostInsight;
+  latency: UsageLatencyInsight | "unknown";
+  tokens: {
+    total: TotalTokens;
+    byKind: DashboardSummary["tokens"]["byKind"];
+    byModel: DashboardSummary["tokens"]["byModel"];
+  };
+  usageRecords: number;
+  usageSkippedLines: number;
+}
+
+export async function buildSummary(eventsPath: string, usagePath: string): Promise<DashboardView> {
+  const lines = await readEventLines(eventsPath);
+  const base = aggregate(lines);
+
+  let grossSaved = 0;
+  let grossAdded = 0;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const ev = parseEventLine(line);
+    if (!ev) continue;
+    const delta = ev.estimatedTokensBefore - ev.estimatedTokensAfter;
+    if (delta > 0) grossSaved += delta;
+    else if (delta < 0) grossAdded += -delta;
+  }
+
+  const insights = await readUsageInsights(usagePath);
+
+  return {
+    ...base,
+    cost: insights.cost,
+    latency: insights.latency,
+    tokens: {
+      ...base.tokens,
+      total: { ...base.tokens.total, tokensSaved: grossSaved, tokensAdded: grossAdded },
+    },
+    usageRecords: insights.records,
+    usageSkippedLines: insights.skippedLines,
+  };
 }
 
 export async function startDashboard(): Promise<ReturnType<typeof Bun.serve>> {
@@ -160,7 +202,7 @@ export async function startDashboard(): Promise<ReturnType<typeof Bun.serve>> {
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname === "/api/summary") {
-        return json(await buildSummary(config.eventsPath));
+        return json(await buildSummary(config.eventsPath, config.economics.usagePath));
       }
       if (url.pathname === "/") {
         return new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });

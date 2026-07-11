@@ -44,6 +44,7 @@ export const DEFAULT_CONFIG: TokenSkeinConfig = {
     preferRtk: true,
     minimumBytes: 3000,
     maximumLines: 160,
+    autoAllow: false,
   },
   economics: {
     enabled: true,

@@ -55,4 +55,49 @@ describe("Responses proxy", () => {
       upstream.stop(true);
     }
   });
+
+  test("does not abort a slow streaming body after upstream headers arrive", async () => {
+    const encoder = new TextEncoder();
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch() {
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(encoder.encode("event: response.created\ndata: {\"type\":\"response.created\"}\n\n"));
+            await Bun.sleep(90);
+            controller.enqueue(encoder.encode("event: response.output_text.delta\ndata: {\"delta\":\"x\"}\n\n"));
+            await Bun.sleep(90);
+            controller.enqueue(
+              encoder.encode(
+                'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":6}}}\n\n',
+              ),
+            );
+            controller.close();
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    const config = await testConfig();
+    config.port = 0;
+    config.upstream = `http://127.0.0.1:${upstream.port}`;
+    config.limits.upstreamTimeoutMs = 120;
+    const proxy = await startProxy(config);
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${proxy.port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "gpt-4o", input: [] }),
+      });
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).toContain("response.completed");
+      expect(text).toContain('"input_tokens":5');
+    } finally {
+      proxy.stop(true);
+      upstream.stop(true);
+    }
+  });
 });

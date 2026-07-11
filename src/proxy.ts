@@ -142,6 +142,14 @@ async function forward(
   }
 
   const startedAt = performance.now();
+  const headerController = new AbortController();
+  const headerTimeout = setTimeout(
+    () =>
+      headerController.abort(
+        new DOMException("Upstream timed out before sending response headers.", "TimeoutError"),
+      ),
+    config.limits.upstreamTimeoutMs,
+  );
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl, {
@@ -149,7 +157,7 @@ async function forward(
       headers: upstreamHeaders(request),
       body: request.method === "GET" || request.method === "HEAD" ? null : body,
       redirect: "manual",
-      signal: AbortSignal.timeout(config.limits.upstreamTimeoutMs),
+      signal: headerController.signal,
     });
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
@@ -163,6 +171,8 @@ async function forward(
       },
       502,
     );
+  } finally {
+    clearTimeout(headerTimeout);
   }
 
   const headers = responseHeaders(upstream.headers);

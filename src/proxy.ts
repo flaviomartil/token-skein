@@ -1,8 +1,11 @@
 import { loadConfig } from "./config.ts";
-import { MetricsRecorder } from "./metrics.ts";
+import { baselineId, captureUsage, configHash, emptyUsage } from "./economics.ts";
+import { MetricsRecorder, UsageRecorder } from "./metrics.ts";
 import { optimizeResponsesRequest } from "./optimize.ts";
+import { costForModel, unknownCost } from "./pricing.ts";
 import { ContextStore } from "./store.ts";
-import type { TokenSkeinConfig, JsonObject, ReasoningEffort } from "./types.ts";
+import { byteLength } from "./tokenizer.ts";
+import type { TokenSkeinConfig, JsonObject, ReasoningEffort, UsageMode } from "./types.ts";
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, {
@@ -38,6 +41,7 @@ function upstreamHeaders(request: Request): Headers {
     "x-token-skein-vision",
     "x-token-skein-style",
     "x-token-skein-effort",
+    "x-token-skein-fixture",
   ]) {
     headers.delete(key);
   }
@@ -82,16 +86,32 @@ async function forward(
   config: TokenSkeinConfig,
   store: ContextStore,
   metrics: MetricsRecorder,
+  usage: UsageRecorder,
+  cfgHash: string,
 ): Promise<Response> {
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > config.limits.maxRequestBytes) {
+    return json({ error: "Request body exceeds the configured size limit." }, 413);
+  }
+
   const incomingUrl = new URL(request.url);
   const upstreamUrl = new URL(`${incomingUrl.pathname}${incomingUrl.search}`, config.upstream);
+  const isResponses = request.method === "POST" && incomingUrl.pathname.endsWith("/responses");
   let body: BodyInit | null = request.body;
   let savedEstimate = 0;
+  let model = "unknown";
+  let mode: UsageMode = "optimized";
+  let fixture: string | null = null;
+  let pairId = "";
 
-  if (request.method === "POST" && incomingUrl.pathname.endsWith("/responses")) {
+  if (isResponses) {
+    const raw = await request.text();
+    if (byteLength(raw) > config.limits.maxRequestBytes) {
+      return json({ error: "Request body exceeds the configured size limit." }, 413);
+    }
     let parsed: unknown;
     try {
-      parsed = await request.json();
+      parsed = JSON.parse(raw);
     } catch {
       return json({ error: "Responses requests must contain valid JSON." }, 400);
     }
@@ -102,7 +122,12 @@ async function forward(
     const vision = truthyHeader(request.headers.get("x-token-skein-vision"));
     const style = truthyHeader(request.headers.get("x-token-skein-style"));
     const effort = effortHeader(request.headers.get("x-token-skein-effort"));
-    const optimized = await optimizeResponsesRequest(parsed as JsonObject, config, store, {
+    const source = parsed as JsonObject;
+    model = typeof source.model === "string" ? source.model : "unknown";
+    fixture = request.headers.get("x-token-skein-fixture");
+    mode = bypass === true ? "baseline" : "optimized";
+    pairId = baselineId(fixture, model, cfgHash);
+    const optimized = await optimizeResponsesRequest(source, config, store, {
       ...(bypass === undefined ? {} : { bypass }),
       ...(vision === undefined ? {} : { vision }),
       ...(style === undefined ? {} : { style }),
@@ -116,21 +141,21 @@ async function forward(
     body = JSON.stringify(optimized.body);
   }
 
+  const startedAt = performance.now();
+  let upstream: Response;
   try {
-    const upstream = await fetch(upstreamUrl, {
+    upstream = await fetch(upstreamUrl, {
       method: request.method,
       headers: upstreamHeaders(request),
       body: request.method === "GET" || request.method === "HEAD" ? null : body,
       redirect: "manual",
-    });
-    const headers = responseHeaders(upstream.headers);
-    headers.set("x-token-skein-estimated-tokens-saved", String(savedEstimate));
-    return new Response(upstream.body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers,
+      signal: AbortSignal.timeout(config.limits.upstreamTimeoutMs),
     });
   } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      return json({ error: "Upstream request timed out." }, 504);
+    }
     return json(
       {
         error: "Unable to reach upstream.",
@@ -139,12 +164,84 @@ async function forward(
       502,
     );
   }
+
+  const headers = responseHeaders(upstream.headers);
+  headers.set("x-token-skein-estimated-tokens-saved", String(savedEstimate));
+  if (isResponses) headers.set("x-token-skein-baseline-id", pairId);
+
+  if (isResponses && config.economics.enabled && upstream.body) {
+    const [clientStream, inspectStream] = upstream.body.tee();
+    const streaming = (upstream.headers.get("content-type") ?? "").includes("text/event-stream");
+    void recordUsage({
+      stream: inspectStream,
+      streaming,
+      startedAt,
+      model,
+      mode,
+      fixture,
+      cfgHash,
+      pairId,
+      usage,
+      maxJsonBytes: config.limits.maxRequestBytes,
+    });
+    return new Response(clientStream, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers,
+    });
+  }
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers,
+  });
+}
+
+interface RecordUsageArgs {
+  stream: ReadableStream<Uint8Array>;
+  streaming: boolean;
+  startedAt: number;
+  model: string;
+  mode: UsageMode;
+  fixture: string | null;
+  cfgHash: string;
+  pairId: string;
+  usage: UsageRecorder;
+  maxJsonBytes: number;
+}
+
+async function recordUsage(args: RecordUsageArgs): Promise<void> {
+  try {
+    const captured = await captureUsage(args.stream, args.streaming, args.startedAt, args.maxJsonBytes);
+    const providerUsage = captured.usage ?? emptyUsage();
+    const cost = captured.usage
+      ? costForModel(providerUsage, args.model)
+      : unknownCost("usage not reported by provider");
+    await args.usage.record({
+      timestamp: new Date().toISOString(),
+      model: args.model,
+      mode: args.mode,
+      streaming: args.streaming,
+      reported: captured.usage !== null,
+      fixture: args.fixture,
+      configHash: args.cfgHash,
+      baselineId: args.pairId,
+      firstByteMs: captured.firstByteMs < 0 ? 0 : Number(captured.firstByteMs.toFixed(2)),
+      usage: providerUsage,
+      cost,
+    });
+  } catch {
+    return;
+  }
 }
 
 export async function startProxy(overrides?: Partial<TokenSkeinConfig>): Promise<ReturnType<typeof Bun.serve>> {
   const config = await loadConfig(overrides);
   const store = new ContextStore(config.storeDirectory);
   const metrics = new MetricsRecorder(config.eventsPath);
+  const usage = new UsageRecorder(config.economics.usagePath);
+  const cfgHash = configHash(config);
   const server = Bun.serve({
     hostname: config.host,
     port: config.port,
@@ -155,12 +252,16 @@ export async function startProxy(overrides?: Partial<TokenSkeinConfig>): Promise
         return json({ status: "ok", service: "token-skein", upstream: config.upstream });
       }
       if (url.pathname === "/v1/token-skein/stats" && request.method === "GET") {
-        return json({ metrics: await metrics.summary(), store: await store.stats() });
+        return json({
+          metrics: await metrics.summary(),
+          usage: await usage.summary(),
+          store: await store.stats(),
+        });
       }
       if (url.pathname === "/v1/token-skein/retrieve" && request.method === "POST") {
         return handleRetrieve(request, store);
       }
-      return forward(request, config, store, metrics);
+      return forward(request, config, store, metrics, usage, cfgHash);
     },
   });
   return server;

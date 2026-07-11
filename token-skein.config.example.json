@@ -29,5 +29,12 @@
     "preferRtk": true,
     "minimumBytes": 3000,
     "maximumLines": 160
+  },
+  "economics": {
+    "enabled": true
+  },
+  "limits": {
+    "maxRequestBytes": 8388608,
+    "upstreamTimeoutMs": 120000
   }
 }

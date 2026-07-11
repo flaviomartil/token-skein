@@ -42,7 +42,12 @@ export interface ShellConfig {
   maximumLines: number;
 }
 
+export interface ArchiveConfig {
+  maxBytes: number;
+}
+
 export interface TokenSkeinConfig {
+  schemaVersion: number;
   host: string;
   port: number;
   upstream: string;
@@ -53,6 +58,7 @@ export interface TokenSkeinConfig {
   style: StyleConfig;
   routing: RoutingConfig;
   shell: ShellConfig;
+  archive: ArchiveConfig;
 }
 
 export type OptimizationKind =

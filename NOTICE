@@ -1,0 +1,27 @@
+TokenSkein
+Copyright 2026 TokenSkein contributors
+
+TokenSkein contains TypeScript reimplementations and adaptations of ideas
+from the following projects:
+
+pxpipe (also distributed as claude-image-proxy)
+Copyright (c) 2026 claude-image-proxy contributors
+Licensed under the MIT License.
+
+Headroom
+Copyright 2025 Headroom Contributors
+Licensed under the Apache License, Version 2.0.
+This product includes software concepts developed by the Headroom Contributors.
+
+RTK
+Copyright 2024 rtk-ai and rtk-ai Labs
+Licensed under the Apache License, Version 2.0.
+
+The concise-output and progressive-context policies are adapted from the
+project owner's global Claude configuration and are included with permission
+for this personal project.
+
+TokenSkein's implementations have been modified for a Bun/TypeScript,
+OpenAI Responses API, MCP, and Codex integration architecture. See
+LICENSES/README.md for the source map and retained notices.
+

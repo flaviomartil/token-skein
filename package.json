@@ -1,0 +1,36 @@
+{
+  "name": "token-skein",
+  "version": "0.1.0",
+  "description": "A local context-economy gateway for GPT and Codex.",
+  "type": "module",
+  "bin": {
+    "token-skein": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "proxy": "bun run src/cli.ts proxy",
+    "mcp": "bun run src/cli.ts mcp",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun test"
+  },
+  "keywords": [
+    "codex",
+    "openai",
+    "responses-api",
+    "context-compression",
+    "token-optimization",
+    "mcp"
+  ],
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@napi-rs/canvas": "^1.0.2",
+    "gpt-tokenizer": "^3.4.0",
+    "zod": "3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^7.0.2"
+  }
+}

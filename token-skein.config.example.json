@@ -1,0 +1,33 @@
+{
+  "host": "127.0.0.1",
+  "port": 8788,
+  "upstream": "https://api.openai.com",
+  "compression": {
+    "enabled": true,
+    "minimumBytes": 6000,
+    "recentInputItems": 4,
+    "maximumSummaryLines": 120,
+    "ttlSeconds": 21600
+  },
+  "vision": {
+    "enabled": false,
+    "models": ["gpt-5.6"],
+    "minimumBytes": 24000,
+    "maximumPages": 4,
+    "estimatedTokensPerPage": 1600,
+    "minimumSavingsRatio": 1.5
+  },
+  "style": {
+    "enabled": true
+  },
+  "routing": {
+    "enabled": true,
+    "overrideExisting": false
+  },
+  "shell": {
+    "enabled": false,
+    "preferRtk": true,
+    "minimumBytes": 3000,
+    "maximumLines": 160
+  }
+}

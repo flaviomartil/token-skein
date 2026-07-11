@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+coverage/
+*.log
+.token-skein/
+token-skein.config.json

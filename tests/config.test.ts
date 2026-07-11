@@ -5,7 +5,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { CURRENT_CONFIG_SCHEMA_VERSION, loadConfig, migrateConfigSchema } from "../src/config.ts";
 
-const ENV_KEYS = ["TOKEN_SKEIN_CONFIG", "TOKEN_SKEIN_PORT", "TOKEN_SKEIN_HOST"] as const;
+const ENV_KEYS = [
+  "TOKEN_SKEIN_CONFIG",
+  "TOKEN_SKEIN_PORT",
+  "TOKEN_SKEIN_HOST",
+  "TOKEN_SKEIN_MAX_REQUEST_BYTES",
+  "TOKEN_SKEIN_UPSTREAM_TIMEOUT_MS",
+] as const;
 const savedEnv: Record<string, string | undefined> = {};
 for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
 
@@ -75,5 +81,23 @@ describe("loadConfig", () => {
     process.env.TOKEN_SKEIN_PORT = "9999";
     const config = await loadConfig();
     expect(config.port).toBe(9999);
+  });
+
+  test("ignores non-numeric limits env overrides instead of producing NaN", async () => {
+    delete process.env.TOKEN_SKEIN_CONFIG;
+    process.env.TOKEN_SKEIN_MAX_REQUEST_BYTES = "lots";
+    process.env.TOKEN_SKEIN_UPSTREAM_TIMEOUT_MS = "soon";
+    const config = await loadConfig();
+    expect(Number.isFinite(config.limits.maxRequestBytes)).toBe(true);
+    expect(Number.isFinite(config.limits.upstreamTimeoutMs)).toBe(true);
+  });
+
+  test("applies valid limits env overrides", async () => {
+    delete process.env.TOKEN_SKEIN_CONFIG;
+    process.env.TOKEN_SKEIN_MAX_REQUEST_BYTES = "1048576";
+    process.env.TOKEN_SKEIN_UPSTREAM_TIMEOUT_MS = "45000";
+    const config = await loadConfig();
+    expect(config.limits.maxRequestBytes).toBe(1048576);
+    expect(config.limits.upstreamTimeoutMs).toBe(45000);
   });
 });

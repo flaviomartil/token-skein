@@ -136,12 +136,10 @@ function environmentOverride(): JsonObject {
     override.economics = { usagePath: resolve(process.env.TOKEN_SKEIN_USAGE_PATH) };
   }
   const limits: JsonObject = {};
-  if (process.env.TOKEN_SKEIN_MAX_REQUEST_BYTES) {
-    limits.maxRequestBytes = Number(process.env.TOKEN_SKEIN_MAX_REQUEST_BYTES);
-  }
-  if (process.env.TOKEN_SKEIN_UPSTREAM_TIMEOUT_MS) {
-    limits.upstreamTimeoutMs = Number(process.env.TOKEN_SKEIN_UPSTREAM_TIMEOUT_MS);
-  }
+  const maxRequestBytes = numericEnvOverride("TOKEN_SKEIN_MAX_REQUEST_BYTES");
+  if (maxRequestBytes !== undefined) limits.maxRequestBytes = maxRequestBytes;
+  const upstreamTimeoutMs = numericEnvOverride("TOKEN_SKEIN_UPSTREAM_TIMEOUT_MS");
+  if (upstreamTimeoutMs !== undefined) limits.upstreamTimeoutMs = upstreamTimeoutMs;
   if (Object.keys(limits).length > 0) override.limits = limits;
   return override;
 }

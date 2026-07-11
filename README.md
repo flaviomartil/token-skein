@@ -46,6 +46,7 @@ flowchart LR
       M[MCP server]
       H[Codex hook and shell filter]
       A[Economics usage recorder]
+      K[Dated price catalog]
       V[Dashboard server]
     end
 
@@ -65,8 +66,10 @@ flowchart LR
     M --> E
     H --> E
     P -->|provider usage| A
+    K -->|cache-aware cost| A
     A --> N
     V -->|read| E
+    V -->|read| N
 ```
 
 Inside the request policy pipeline, operations run in this order:
@@ -79,7 +82,7 @@ Inside the request policy pipeline, operations run in this order:
 6. optionally append PNG pages only when model allowlisting and the profitability estimate both pass;
 7. forward the transformed request to the configured upstream.
 
-The editable source is [docs/architecture.excalidraw](docs/architecture.excalidraw).
+A freeform editable copy lives at [docs/architecture.excalidraw](docs/architecture.excalidraw); the mermaid block above is the source of truth and may be ahead of it.
 
 ### Module map
 
@@ -93,6 +96,11 @@ The editable source is [docs/architecture.excalidraw](docs/architecture.excalidr
 | `src/shell.ts` | Opt-in Codex hook, RTK delegation, shell-output archive |
 | `src/routing.ts` | Prompt-complexity effort selection |
 | `src/metrics.ts` | Content-free optimization event aggregation |
+| `src/economics.ts` | Provider usage parsing (SSE and JSON) and usage JSONL recording |
+| `src/pricing.ts` | Dated per-model price catalog and cache-aware cost computation |
+| `src/dashboard.ts` + `src/dashboard/` | Loopback dashboard server and metrics/usage aggregation |
+| `src/config.ts` | Config loading, validation, and environment overrides |
+| `src/install.ts` | Transactional Codex install, uninstall, and verify |
 | `src/codex.ts` | Non-mutating Codex integration snippets |
 | `src/cli.ts` | User-facing command dispatcher |
 
@@ -105,13 +113,13 @@ The editable source is [docs/architecture.excalidraw](docs/architecture.excalidr
 - **Text lane before vision lane.** Text remains searchable and exact. Vision is a model-dependent optimization, so it is opt-in and has a break-even gate.
 - **Deterministic transforms first.** Schema cleanup, line selection, identifier retention, and routing are inspectable and testable. Semantic summarization can be added later behind evaluation gates.
 - **Strict shell allowlist.** Hook rewriting is limited to recognized read/verification commands. Destructive, compound, redirected, or ambiguous commands are not rewritten or auto-approved.
-- **Measurement without inflated claims.** Current statistics are tokenizer-based estimates. Provider-reported usage and cache-aware dollar accounting are planned.
+- **Measurement without inflated claims.** Savings statistics are tokenizer-based estimates. Dollar figures use provider-reported usage priced through a dated per-model catalog with cache-aware input rates; models absent from the catalog report cost as unknown instead of guessing.
 
 ## Dashboard
 
 ![TokenSkein savings dashboard](docs/dashboard.png)
 
-The dashboard reads the same metrics JSONL used by `token-skein stats` and renders estimated token savings, cost and latency where recorded, cache hit/miss counts, and an hourly series, broken down by optimization mode and model. Start it with `bun run dashboard` (equivalent to `bun run src/dashboard.ts`); it listens on `127.0.0.1:8790` by default, overridable with `TOKEN_SKEIN_DASHBOARD_PORT`. It binds to loopback only and is not reachable over the network.
+The dashboard reads the metrics JSONL used by `token-skein stats` plus the provider usage JSONL, and renders estimated token savings, provider-reported cost and latency where recorded, cache hit/miss counts, and an hourly series, broken down by optimization mode and model. Start it with `bun run dashboard` (equivalent to `bun run src/dashboard.ts`); it listens on `127.0.0.1:8790` by default, overridable with `TOKEN_SKEIN_DASHBOARD_PORT`. It binds to loopback only and is not reachable over the network.
 
 ## What was ported
 
@@ -139,7 +147,6 @@ The optional prompt fragment lives at [integrations/codex/AGENTS.token-skein.md]
 
 The prioritized backlog is tracked in [PLAN.md](PLAN.md). The main planned work is:
 
-- use provider-reported input, cached-input, image-input, reasoning, and output usage;
 - build a repeatable A/B harness for correctness, exact identifiers, latency, and cost;
 - add streaming-aware response accounting without buffering SSE;
 - add session-aware history compaction instead of only item-age rules;
